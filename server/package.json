@@ -1,0 +1,25 @@
+{
+  "name": "ai-mock-interview-server",
+  "version": "1.0.0",
+  "description": "Backend for AI Mock Interview Platform",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.2",
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.1",
+    "mammoth": "^1.8.0",
+    "mongoose": "^8.8.2",
+    "pdf-parse": "^2.4.5",
+    "pdfkit": "^0.20.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.1"
+  }
+}
