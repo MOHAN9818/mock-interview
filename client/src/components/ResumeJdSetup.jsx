@@ -17,6 +17,8 @@ const ResumeJdSetup = ({
   error
 }) => {
   const [jdInput, setJdInput] = useState('');
+  const [selectedSkillEvidence, setSelectedSkillEvidence] = useState(null);
+  const [activeTab, setActiveTab] = useState('skills'); // 'skills' | 'improvements' | 'match_breakdown'
 
   return (
     <div className="space-y-6">
@@ -24,13 +26,13 @@ const ResumeJdSetup = ({
       <div className="rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 p-6 shadow-xl">
         <div className="max-w-3xl">
           <span className="px-3 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-xs font-semibold uppercase tracking-wider">
-            Phase 1: ATS Resume & Target Alignment
+            Phase 1: ATS Resume & Career Intelligence
           </span>
           <h3 className="text-2xl font-bold text-slate-100 mt-2">
-            Configure Your AI Interview Session
+            Configure Your Adaptive AI Interview Session
           </h3>
           <p className="text-sm text-slate-400 mt-1">
-            Upload your resume and optional job description. Our Gemini 2.5 AI intelligence engine parses your projects, skills, and target competencies to deliver an adaptive, personalized mock interview.
+            Upload your resume and optional job description. Our RAG-grounded AI intelligence engine indexes your projects, skills, and target competencies to deliver an adaptive, personalized mock interview.
           </p>
         </div>
       </div>
@@ -69,22 +71,81 @@ const ResumeJdSetup = ({
               <span className="text-sm font-semibold text-slate-200 group-hover:text-cyan-300">
                 {resumeStructured?.candidate_name ? `Loaded: ${resumeStructured.candidate_name}` : 'Select Resume (PDF, DOCX, TXT)'}
               </span>
-              <span className="text-xs text-slate-500 mt-1">Automatic ATS skill & project extraction</span>
+              <span className="text-xs text-slate-500 mt-1">Automatic ATS skill, project & evidence extraction</span>
             </label>
 
-            {/* Extracted Profile Snippet */}
+            {/* Resume Extracted Intel Tabs */}
             {resumeStructured && (
-              <div className="mt-4 p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2 text-xs">
-                <p className="font-semibold text-cyan-400">Extracted Skills:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {[...(resumeStructured.skills || []), ...(resumeStructured.programming_languages || [])].slice(0, 8).map((s, i) => (
-                    <span key={i} className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">{s}</span>
-                  ))}
+              <div className="mt-4 space-y-3">
+                <div className="flex gap-2 border-b border-slate-800 pb-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('skills')}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                      activeTab === 'skills' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Skills & Evidence
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('improvements')}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                      activeTab === 'improvements' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    AI Bullet Rewrites ({resumeQuality?.bullet_improvements_comparison?.length || resumeQuality?.weak_bullet_points?.length || 0})
+                  </button>
                 </div>
-                {resumeStructured.projects?.length > 0 && (
-                  <p className="text-slate-400 mt-1">
-                    <strong className="text-slate-300">Target Project:</strong> {resumeStructured.projects[0].name || resumeStructured.projects[0]}
-                  </p>
+
+                {activeTab === 'skills' && (
+                  <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2 text-xs">
+                    <p className="font-semibold text-cyan-400">Click a verified skill to see resume evidence quote:</p>
+                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                      {[...(resumeStructured.skills || []), ...(resumeStructured.programming_languages || [])].map((s, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setSelectedSkillEvidence(selectedSkillEvidence === s ? null : s)}
+                          className={`px-2 py-0.5 rounded border transition-colors ${
+                            selectedSkillEvidence === s
+                              ? 'bg-cyan-500 text-slate-950 font-bold border-cyan-400'
+                              : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-cyan-500/50'
+                          }`}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+
+                    {selectedSkillEvidence && resumeStructured.skill_evidence?.[selectedSkillEvidence] && (
+                      <div className="p-2.5 rounded-lg bg-cyan-950/30 border border-cyan-500/30 text-slate-200 text-xs">
+                        <span className="text-cyan-300 font-bold">Evidence for "{selectedSkillEvidence}": </span>
+                        <span className="italic">"{resumeStructured.skill_evidence[selectedSkillEvidence]}"</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeTab === 'improvements' && (
+                  <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3 text-xs max-h-56 overflow-y-auto">
+                    {(resumeQuality?.bullet_improvements_comparison || [
+                      {
+                        section: 'Experience',
+                        before: 'Built application features',
+                        after: 'Architected scalable full-stack features with Node.js and React, optimizing load times.'
+                      }
+                    ]).map((comp, idx) => (
+                      <div key={idx} className="p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
+                          <span>{comp.section || 'Resume Bullet'}</span>
+                          <span className="text-purple-400 uppercase">AI Rewrite</span>
+                        </div>
+                        <p className="text-rose-300/90 line-through">Before: {comp.before || comp.original}</p>
+                        <p className="text-emerald-300 font-medium">After: {comp.after || comp.suggested}</p>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             )}
@@ -122,19 +183,32 @@ const ResumeJdSetup = ({
               Analyze & Match Against Resume
             </button>
 
-            {/* Matching analysis chips */}
+            {/* Matching analysis chips & breakdown */}
             {matchScore && (
-              <div className="mt-3 p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-emerald-400 font-semibold">Matched:</span>
-                  <span className="text-slate-300">{(matchScore.matched_skills || []).slice(0, 4).join(', ') || 'Foundation skills'}</span>
-                </div>
-                {matchScore.missing_skills?.length > 0 && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-amber-400 font-semibold">Missing/Gap:</span>
-                    <span className="text-slate-300">{matchScore.missing_skills.slice(0, 3).join(', ')}</span>
+              <div className="mt-3 p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs space-y-2">
+                <div className="grid grid-cols-2 gap-2 pb-2 border-b border-slate-800/80">
+                  <div>
+                    <span className="text-slate-400 text-[11px] block">Project Relevance</span>
+                    <span className="font-bold text-slate-200">{matchScore.project_relevance_score || 85}%</span>
                   </div>
-                )}
+                  <div>
+                    <span className="text-slate-400 text-[11px] block">Keyword Overlap</span>
+                    <span className="font-bold text-slate-200">{matchScore.keyword_overlap_score || matchScore.semantic_similarity || 80}%</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-emerald-400 font-semibold">Matched Required:</span>
+                    <span className="text-slate-300">{(matchScore.matched_required_skills || matchScore.matched_skills || []).slice(0, 4).join(', ') || 'Core Stack'}</span>
+                  </div>
+                  {matchScore.missing_skills?.length > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-amber-400 font-semibold">Missing/Gap:</span>
+                      <span className="text-slate-300">{matchScore.missing_skills.slice(0, 3).join(', ')}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -148,7 +222,7 @@ const ResumeJdSetup = ({
           Session Parameters & Launch
         </h4>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div>
             <label className="text-xs text-slate-400 block mb-1.5 font-medium">Target Role</label>
             <input
@@ -161,15 +235,29 @@ const ResumeJdSetup = ({
           </div>
 
           <div>
-            <label className="text-xs text-slate-400 block mb-1.5 font-medium">Starting Difficulty</label>
+            <label className="text-xs text-slate-400 block mb-1.5 font-medium">Interview Mode</label>
+            <select
+              value={setup.type || 'Technical'}
+              onChange={(e) => setSetup({ ...setup, type: e.target.value })}
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none"
+            >
+              <option value="Technical">Technical (Core Stack)</option>
+              <option value="System Design">System Design & Scalability</option>
+              <option value="Project-Deep-Dive">Project Deep Dive</option>
+              <option value="HR / Behavioral">HR / Behavioral (STAR)</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs text-slate-400 block mb-1.5 font-medium">Difficulty Level</label>
             <select
               value={setup.difficulty}
               onChange={(e) => setSetup({ ...setup, difficulty: e.target.value })}
               className="w-full rounded-lg border border-slate-700 bg-slate-950 p-2.5 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none"
             >
-              <option value="Easy">Easy (Foundational)</option>
-              <option value="Medium">Medium (Industry Standard)</option>
-              <option value="Hard">Hard (Senior / Architect)</option>
+              <option value="Easy">Beginner / Foundational</option>
+              <option value="Medium">Intermediate (Standard)</option>
+              <option value="Hard">Advanced (Architect)</option>
             </select>
           </div>
 
@@ -191,7 +279,7 @@ const ResumeJdSetup = ({
               disabled={isLoading || !resumeStructured}
               className="w-full py-2.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-bold text-sm shadow-lg shadow-cyan-500/20 transition-all"
             >
-              {isLoading ? 'Initializing...' : 'Launch AI Video Interview'}
+              {isLoading ? 'Initializing RAG Session...' : 'Launch AI Video Interview'}
             </button>
           </div>
         </div>

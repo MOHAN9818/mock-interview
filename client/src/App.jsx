@@ -25,7 +25,7 @@ const AuthPage = ({ onAuth }) => {
       localStorage.setItem('user', JSON.stringify(response.data.user));
       onAuth(response.data.user);
     } catch (err) {
-      setError(err.response?.data?.message || 'Authentication failed. Please check credentials.');
+      setError(err.response?.data?.error || err.response?.data?.message || 'Authentication failed. Please check credentials.');
     } finally {
       setLoading(false);
     }
@@ -35,15 +35,12 @@ const AuthPage = ({ onAuth }) => {
     <div className="min-h-screen flex items-center justify-center px-4 bg-slate-950 text-slate-100">
       <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900/90 p-8 shadow-2xl backdrop-blur-md">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7z" />
-              <circle cx="12" cy="9" r="2.5" />
-            </svg>
+          <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 font-bold">
+            AI
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-100">AI Mock Interview</h1>
-            <p className="text-xs text-cyan-400 font-medium">Adaptive Video Intelligence Platform</p>
+            <p className="text-xs text-cyan-400 font-medium">Adaptive RAG-Grounded Intelligence Platform</p>
           </div>
         </div>
 
@@ -136,6 +133,7 @@ const Dashboard = ({ user, onLogout }) => {
   const [currentAnswer, setCurrentAnswer] = useState('');
   const [questionCategory, setQuestionCategory] = useState('Introduction');
   const [questionDifficulty, setQuestionDifficulty] = useState('Medium');
+  const [adaptationReason, setAdaptationReason] = useState('');
   const [questionNumber, setQuestionNumber] = useState(0);
   const [aiState, setAiState] = useState('idle'); // 'speaking' | 'listening' | 'evaluating' | 'thinking' | 'idle'
 
@@ -150,6 +148,8 @@ const Dashboard = ({ user, onLogout }) => {
   const [finalAssessment, setFinalAssessment] = useState(null);
   const [skillGap, setSkillGap] = useState(null);
   const [history, setHistory] = useState([]);
+  const [sessionWarnings, setSessionWarnings] = useState([]);
+  const [integrityResult, setIntegrityResult] = useState(null);
 
   const recognitionRef = useRef(null);
   const navigate = useNavigate();
@@ -171,7 +171,7 @@ const Dashboard = ({ user, onLogout }) => {
     fetchHistory();
   }, []);
 
-  // Text-To-Speech for AI Interviewer Voice
+  // Text-To-Speech for AI Interviewer Voice (Browser SpeechSynthesis)
   const speakText = (text) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
@@ -219,7 +219,7 @@ const Dashboard = ({ user, onLogout }) => {
         }
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Error parsing resume file.');
+      setError(err.response?.data?.error || err.response?.data?.message || 'Error parsing resume document.');
     } finally {
       setIsLoading(false);
     }
@@ -228,7 +228,7 @@ const Dashboard = ({ user, onLogout }) => {
   // JD Analysis & Matching Handler
   const handleAnalyzeJd = async (jdText) => {
     if (!jdText?.trim() || !resumeStructured) {
-      setError('Please upload a resume first.');
+      setError('Please upload and extract a resume first.');
       return;
     }
     try {
@@ -252,13 +252,13 @@ const Dashboard = ({ user, onLogout }) => {
         setSetup((prev) => ({ ...prev, role: structuredJd.role }));
       }
     } catch (err) {
-      setError('Error analyzing and matching job description.');
+      setError(err.response?.data?.error || 'Error analyzing and matching job description.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Launch AI Video Interview
+  // Launch AI Video Interview (with RAG Grounding)
   const startInterview = async () => {
     if (!resumeStructured) {
       setError('Please upload and analyze a resume first.');
@@ -272,6 +272,8 @@ const Dashboard = ({ user, onLogout }) => {
     setSkillGap(null);
     setConversation([]);
     setCurrentAnswer('');
+    setSessionWarnings([]);
+    setIntegrityResult(null);
 
     try {
       const response = await api.post(
@@ -292,12 +294,13 @@ const Dashboard = ({ user, onLogout }) => {
       setCurrentQuestion(response.data.question);
       setQuestionCategory(response.data.category || 'Architecture & Experience');
       setQuestionDifficulty(response.data.difficulty || setup.difficulty);
+      setAdaptationReason(response.data.adaptationReason || '');
       setQuestionNumber(1);
       setCurrentPhase('interview');
 
       speakText(response.data.question);
     } catch (err) {
-      setError('Unable to launch the AI interview session.');
+      setError(err.response?.data?.error || 'Unable to launch the AI interview session.');
       setAiState('idle');
     } finally {
       setIsLoading(false);
@@ -314,7 +317,7 @@ const Dashboard = ({ user, onLogout }) => {
     setIsLoading(true);
     setAiState('evaluating');
 
-    // Stop listening if speech was ongoing
+    // Stop listening if speech recognition was active
     if (isListening && recognitionRef.current) {
       recognitionRef.current.stop();
       setIsListening(false);
@@ -351,12 +354,13 @@ const Dashboard = ({ user, onLogout }) => {
       setCurrentQuestion(response.data.question);
       setQuestionCategory(response.data.category || 'Technical Evaluation');
       setQuestionDifficulty(response.data.difficulty || questionDifficulty);
+      setAdaptationReason(response.data.adaptationReason || '');
       setQuestionNumber(nextQuestionNumber);
       setCurrentAnswer('');
 
       speakText(response.data.question);
     } catch (err) {
-      setError('Error processing your answer. Please try submitting again.');
+      setError(err.response?.data?.error || 'Error processing your answer. Please try submitting again.');
       setAiState('idle');
     } finally {
       setIsLoading(false);
@@ -386,7 +390,8 @@ const Dashboard = ({ user, onLogout }) => {
           resumeStructured,
           jdStructured,
           resumeQuality,
-          matchScore
+          matchScore,
+          integrityWarnings: sessionWarnings
         },
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
       );
@@ -395,15 +400,16 @@ const Dashboard = ({ user, onLogout }) => {
       setFinalAssessment(response.data.finalAssessment);
       setSkillGap(response.data.skillGap);
       setDetailedFeedback(response.data.interview?.questions || []);
+      setIntegrityResult(response.data.integrity || response.data.interview);
       setCurrentPhase('results');
       setAiState('idle');
     } catch (err) {
-      setError('Unable to save and finalize the session.');
+      setError(err.response?.data?.error || 'Unable to save and finalize the session.');
       setAiState('idle');
     }
   };
 
-  // Voice Input via Web Speech API
+  // Voice Input via Browser Web Speech API
   const handleStartVoice = () => {
     if (isListening) {
       recognitionRef.current?.stop();
@@ -414,7 +420,7 @@ const Dashboard = ({ user, onLogout }) => {
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setError('Voice recognition is not supported in this browser. Please use Google Chrome or Edge.');
+      setError('Voice recognition is not supported in this browser. Please use Chrome, Edge, or Safari, or type your answer.');
       return;
     }
 
@@ -464,7 +470,8 @@ const Dashboard = ({ user, onLogout }) => {
           matchAnalysis: { ...matchScore, role: setup.role },
           finalAssessment,
           skillGap,
-          evaluations: detailedFeedback
+          evaluations: detailedFeedback,
+          integrity: integrityResult
         },
         {
           responseType: 'blob',
@@ -475,7 +482,7 @@ const Dashboard = ({ user, onLogout }) => {
       const url = URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
       const link = document.createElement('a');
       link.href = url;
-      link.download = `Interview_Assessment_${user?.name?.replace(/\\s+/g, '_') || 'Candidate'}.pdf`;
+      link.download = `Interview_Assessment_${user?.name?.replace(/\s+/g, '_') || 'Candidate'}.pdf`;
       link.click();
     } catch (err) {
       setError('Failed to generate executive PDF report.');
@@ -485,7 +492,6 @@ const Dashboard = ({ user, onLogout }) => {
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100">
       <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        
         {/* Navigation & User Header */}
         <header className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-900/90 p-6 shadow-xl backdrop-blur-md">
           <div className="flex items-center gap-3">
@@ -553,6 +559,7 @@ const Dashboard = ({ user, onLogout }) => {
             currentQuestion={currentQuestion}
             questionCategory={questionCategory}
             questionDifficulty={questionDifficulty}
+            adaptationReason={adaptationReason}
             currentAnswer={currentAnswer}
             onAnswerChange={setCurrentAnswer}
             onSubmitAnswer={submitAnswer}
@@ -564,6 +571,7 @@ const Dashboard = ({ user, onLogout }) => {
             aiState={aiState}
             onReplayQuestion={() => speakText(currentQuestion)}
             isCompleted={false}
+            onWarningsChange={setSessionWarnings}
           />
         )}
 
@@ -578,9 +586,13 @@ const Dashboard = ({ user, onLogout }) => {
               setCurrentQuestion('');
               setCurrentAnswer('');
               setConversation([]);
+              setSessionWarnings([]);
+              setIntegrityResult(null);
             }}
             resumeQuality={resumeQuality}
             matchScore={matchScore}
+            integrity={integrityResult}
+            sessionWarnings={sessionWarnings}
           />
         )}
       </div>

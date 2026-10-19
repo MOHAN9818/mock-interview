@@ -16,11 +16,25 @@ const InterviewDashboard = ({
   onDownloadPdf,
   onRestart,
   resumeQuality,
-  matchScore
+  matchScore,
+  integrity,
+  sessionWarnings = []
 }) => {
   const [expandedIndex, setExpandedIndex] = useState(0);
+  const [showWarningLog, setShowWarningLog] = useState(false);
 
-  const overallScore = finalAssessment?.OverallScore ?? 0;
+  const rawOverall = finalAssessment?.OverallScore ?? 0;
+  const originalScore = integrity?.originalScore !== undefined ? integrity.originalScore : rawOverall;
+  const finalScore = integrity?.finalAdjustedScore !== undefined ? integrity.finalAdjustedScore : originalScore;
+  const integrityPenalty = integrity?.integrityPenalty ?? 0;
+  const integrityStatus = integrity?.integrityStatus || 'VERIFIED';
+  const isReviewRequired = integrityStatus === 'REVIEW_REQUIRED';
+  const qualifyingWarnings = integrity?.qualifyingWarningCount ?? 0;
+  const totalWarnings = integrity?.warningCount ?? (integrity?.integrityWarnings?.length || sessionWarnings.length);
+  const warningList = integrity?.integrityWarnings || sessionWarnings;
+
+  const readiness = finalAssessment?.ReadinessLevel || (finalScore >= 75 ? 'High Readiness' : 'Moderate Readiness');
+
   const metrics = [
     { label: 'Technical Depth', score: finalAssessment?.TechnicalKnowledge ?? 0, color: 'bg-cyan-500' },
     { label: 'Problem Solving', score: finalAssessment?.ProblemSolving ?? 0, color: 'bg-indigo-500' },
@@ -36,9 +50,21 @@ const InterviewDashboard = ({
       <div className="rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 p-8 shadow-2xl">
         <div className="flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="space-y-2 text-center md:text-left">
-            <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider">
-              Interview Evaluation Complete
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider">
+                Interview Evaluation Complete
+              </span>
+              <span className="px-3 py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold uppercase tracking-wider">
+                {readiness}
+              </span>
+              <span className={`px-3 py-1 rounded-full border text-xs font-bold uppercase tracking-wider ${
+                isReviewRequired
+                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/30 animate-pulse'
+                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+              }`}>
+                Integrity: {isReviewRequired ? 'Review Required' : 'Verified'}
+              </span>
+            </div>
             <h2 className="text-3xl font-extrabold text-slate-100">
               Candidate Performance Intelligence Report
             </h2>
@@ -48,10 +74,17 @@ const InterviewDashboard = ({
           </div>
 
           {/* Overall Score Circle Badge */}
-          <div className="flex flex-col items-center justify-center p-5 rounded-2xl bg-slate-950 border border-cyan-500/40 shadow-inner min-w-[160px]">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Overall Score</span>
-            <span className="text-4xl font-extrabold text-cyan-400 mt-1">{overallScore}</span>
+          <div className="flex flex-col items-center justify-center p-5 rounded-2xl bg-slate-950 border border-cyan-500/40 shadow-inner min-w-[170px]">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
+              {integrityPenalty > 0 ? 'Adjusted Score' : 'Overall Score'}
+            </span>
+            <span className="text-4xl font-extrabold text-cyan-400 mt-1">{finalScore}</span>
             <span className="text-xs text-slate-500">out of 100</span>
+            {integrityPenalty > 0 && (
+              <span className="text-[10px] text-amber-400 mt-1">
+                Original Score: {originalScore}
+              </span>
+            )}
           </div>
         </div>
 
@@ -76,6 +109,139 @@ const InterviewDashboard = ({
             Start Another Session
           </button>
         </div>
+      </div>
+
+      {/* Camera Monitoring & Interview Integrity Audit Card */}
+      <div className={`rounded-2xl border p-6 shadow-xl space-y-4 transition-all ${
+        isReviewRequired
+          ? 'bg-rose-950/20 border-rose-500/30'
+          : 'bg-slate-900/80 border-slate-800'
+      }`}>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">🛡️</span>
+            <div>
+              <h3 className="text-lg font-bold text-slate-100">
+                Camera Monitoring & Session Integrity Summary
+              </h3>
+              <p className="text-xs text-slate-400">
+                Local browser-based visual verification and compliance audit
+              </p>
+            </div>
+          </div>
+          <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${
+            isReviewRequired
+              ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+              : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+          }`}>
+            {isReviewRequired ? '⚠ Review Required' : '✓ Verified'}
+          </span>
+        </div>
+
+        {/* 4 Stat Boxes */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 text-center">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Qualifying Warnings</p>
+            <p className={`text-2xl font-extrabold mt-1 ${isReviewRequired ? 'text-rose-400' : 'text-slate-100'}`}>
+              {qualifyingWarnings} <span className="text-xs font-normal text-slate-500">/ 10</span>
+            </p>
+            <p className="text-[10px] text-slate-500 mt-0.5">{totalWarnings} total events</p>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 text-center">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Original Tech Score</p>
+            <p className="text-2xl font-extrabold text-cyan-400 mt-1">{originalScore}%</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">Raw technical answer score</p>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 text-center">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Integrity Adjustment</p>
+            <p className={`text-2xl font-extrabold mt-1 ${integrityPenalty > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+              {integrityPenalty > 0 ? `-${integrityPenalty} pts` : '0 pts'}
+            </p>
+            <p className="text-[10px] text-slate-500 mt-0.5">{integrityPenalty > 0 ? 'Policy adjustment' : 'No deduction'}</p>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 text-center">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Final Adjusted Score</p>
+            <p className="text-2xl font-extrabold text-emerald-400 mt-1">{finalScore}%</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">Authoritative score</p>
+          </div>
+        </div>
+
+        {/* Audit Explanation Banner */}
+        <div className={`p-3.5 rounded-xl border text-xs leading-relaxed ${
+          isReviewRequired
+            ? 'bg-rose-950/40 border-rose-500/30 text-rose-200'
+            : 'bg-slate-950/60 border-slate-800 text-slate-300'
+        }`}>
+          <div className="flex items-start gap-2">
+            <span className="font-bold text-slate-400 shrink-0">Audit Notice:</span>
+            <span>
+              {integrity?.integrityReason || (
+                isReviewRequired
+                  ? 'Your interview exceeded the permitted camera-monitoring warning threshold. The session has been flagged for integrity review in accordance with the configured policy.'
+                  : 'Candidate maintained continuous presence and visibility. Integrity verified under standard camera monitoring threshold.'
+              )}
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-500 mt-1 italic">
+            * Camera monitoring tracks candidate visual visibility. Warnings reflect session presence metrics and do not constitute definitive proof of malpractice.
+          </p>
+        </div>
+
+        {/* Warning Event Log Toggle if warnings exist */}
+        {warningList.length > 0 && (
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setShowWarningLog(!showWarningLog)}
+              className="text-xs font-semibold text-cyan-400 hover:text-cyan-300 flex items-center gap-1.5 transition-colors"
+            >
+              <span>{showWarningLog ? 'Hide' : 'View'} Detected Monitoring Events ({warningList.length})</span>
+              <svg className={`w-3.5 h-3.5 transition-transform ${showWarningLog ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+
+            {showWarningLog && (
+              <div className="mt-3 overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/90 p-3">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-slate-800 text-slate-400 uppercase text-[10px]">
+                    <tr>
+                      <th className="pb-2 pr-3">#</th>
+                      <th className="pb-2 pr-3">Type</th>
+                      <th className="pb-2 pr-3">Timestamp</th>
+                      <th className="pb-2 pr-3">Duration</th>
+                      <th className="pb-2 pr-3">Threshold Qualifying</th>
+                      <th className="pb-2">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                    {warningList.map((w, idx) => (
+                      <tr key={idx} className="hover:bg-slate-900/50">
+                        <td className="py-2 pr-3 font-semibold text-slate-400">{w.warningNumber || idx + 1}</td>
+                        <td className="py-2 pr-3 font-mono text-[11px] text-cyan-300">{w.type}</td>
+                        <td className="py-2 pr-3 text-slate-400">{new Date(w.timestamp).toLocaleTimeString()}</td>
+                        <td className="py-2 pr-3">{w.duration ? `${w.duration}s` : 'N/A'}</td>
+                        <td className="py-2 pr-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            w.countedTowardIntegrity
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}>
+                            {w.countedTowardIntegrity ? 'Yes (Counts)' : 'No (Technical)'}
+                          </span>
+                        </td>
+                        <td className="py-2 text-slate-400">{w.explanation}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Core Competency Metric Progress Bars */}
@@ -206,6 +372,28 @@ const InterviewDashboard = ({
                               {c}
                             </span>
                           ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Deterministic Code / Complexity Analysis if applicable */}
+                    {ev.deterministic_code_analysis?.hasCode && (
+                      <div className="p-3 rounded-lg bg-indigo-950/20 border border-indigo-500/20 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                            <span>⚡</span> Deterministic Code & Algorithmic Analysis:
+                          </span>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            {ev.deterministic_code_analysis.bracketBalance}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                          <p className="text-slate-300">
+                            <strong className="text-slate-400">Estimated Time:</strong> {ev.deterministic_code_analysis.estimatedTimeComplexity}
+                          </p>
+                          <p className="text-slate-300">
+                            <strong className="text-slate-400">Estimated Space:</strong> {ev.deterministic_code_analysis.estimatedSpaceComplexity}
+                          </p>
                         </div>
                       </div>
                     )}

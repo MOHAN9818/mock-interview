@@ -15,26 +15,29 @@ const api = axios.create({ baseURL: '/api' });
 
 const HistoryPage = ({ user, onLogout }) => {
   const [history, setHistory] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedSession, setSelectedSession] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchHistory = async () => {
+    const fetchData = async () => {
       try {
-        const response = await api.get('/interviews/history', {
-          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-        });
-        const fetched = response.data.interviews || [];
-        setHistory(fetched);
+        const token = localStorage.getItem('token');
+        const [histRes, analyticsRes] = await Promise.all([
+          api.get('/interviews/history', { headers: { Authorization: `Bearer ${token}` } }),
+          api.get('/interviews/analytics', { headers: { Authorization: `Bearer ${token}` } })
+        ]);
+        setHistory(histRes.data.interviews || []);
+        setAnalytics(analyticsRes.data.analytics || null);
       } catch (err) {
-        console.error(err);
+        console.error('History and analytics fetch error:', err);
       } finally {
         setIsLoading(false);
       }
     };
 
-    fetchHistory();
+    fetchData();
   }, []);
 
   // Format data for the chart: chronological order (0-100 scale)
@@ -63,7 +66,16 @@ const HistoryPage = ({ user, onLogout }) => {
           matchAnalysis: interview.matchScore || { role: interview.role },
           finalAssessment: interview.finalAssessment || { OverallScore: interview.totalScore },
           skillGap: interview.skillGap || {},
-          evaluations: interview.questions || []
+          evaluations: interview.questions || [],
+          integrity: {
+            originalScore: interview.originalScore || interview.totalScore,
+            finalAdjustedScore: interview.finalAdjustedScore || interview.totalScore,
+            integrityPenalty: interview.integrityPenalty || 0,
+            integrityStatus: interview.integrityStatus || 'VERIFIED',
+            qualifyingWarningCount: interview.qualifyingWarningCount || 0,
+            warningCount: interview.warningCount || 0,
+            integrityReason: interview.integrityReason || ''
+          }
         },
         { responseType: 'blob', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
       );
@@ -84,9 +96,9 @@ const HistoryPage = ({ user, onLogout }) => {
         {/* Header */}
         <header className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-900/90 p-6 shadow-xl backdrop-blur-md">
           <div>
-            <span className="text-xs font-semibold uppercase tracking-wider text-cyan-400">Intelligence & Progress</span>
-            <h2 className="text-2xl font-bold text-slate-100 mt-1">{user?.name || 'Candidate'}'s Performance Journey</h2>
-            <p className="text-xs text-slate-400">Track benchmark score progression and review question-level AI evaluations.</p>
+            <span className="text-xs font-semibold uppercase tracking-wider text-cyan-400">Career Intelligence & Performance Analytics</span>
+            <h2 className="text-2xl font-bold text-slate-100 mt-1">{user?.name || 'Candidate'}'s Career Progress</h2>
+            <p className="text-xs text-slate-400">Track benchmark score progression, domain strengths, and concept retention.</p>
           </div>
           <div className="flex gap-3">
             <button
@@ -157,6 +169,67 @@ const HistoryPage = ({ user, onLogout }) => {
               </div>
             </div>
 
+            {/* Career Intelligence Topic Breakdown */}
+            {analytics && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Strongest Topics */}
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl space-y-3">
+                  <h4 className="text-sm font-bold text-emerald-400 flex items-center gap-2">
+                    <span>✓</span> Top Performing Topics
+                  </h4>
+                  <div className="space-y-2">
+                    {analytics.strongestTopics?.length > 0 ? (
+                      analytics.strongestTopics.map((t, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-2 rounded-lg bg-slate-950/80 border border-slate-800 text-xs">
+                          <span className="text-slate-200">{t.topic}</span>
+                          <span className="font-bold text-emerald-400">{t.avgScore}%</span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">No topic benchmarks recorded yet.</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Topics Needing Practice */}
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl space-y-3">
+                  <h4 className="text-sm font-bold text-amber-400 flex items-center gap-2">
+                    <span>!</span> Topics Requiring Practice
+                  </h4>
+                  <div className="space-y-2">
+                    {analytics.weakestTopics?.length > 0 ? (
+                      analytics.weakestTopics.map((t, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-2 rounded-lg bg-slate-950/80 border border-slate-800 text-xs">
+                          <span className="text-slate-200">{t.topic}</span>
+                          <span className="font-bold text-amber-400">{t.avgScore}%</span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">No critical weak spots detected.</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Repeated Missed Concepts */}
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl space-y-3">
+                  <h4 className="text-sm font-bold text-cyan-400 flex items-center gap-2">
+                    <span>🎯</span> Repeatedly Missed Concepts
+                  </h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {analytics.repeatedMissedConcepts?.length > 0 ? (
+                      analytics.repeatedMissedConcepts.map((item, idx) => (
+                        <span key={idx} className="px-2.5 py-1 rounded-md bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 text-xs">
+                          {item.concept} ({item.count}x)
+                        </span>
+                      ))
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">Great job! No repeatedly missed concepts.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Detailed Sessions Table */}
             <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl">
               <h3 className="text-lg font-bold text-slate-100 mb-4">Completed Interview Sessions</h3>
@@ -168,13 +241,18 @@ const HistoryPage = ({ user, onLogout }) => {
                       <th className="pb-3 pr-4 font-semibold">Role / Target Position</th>
                       <th className="pb-3 pr-4 font-semibold">Difficulty</th>
                       <th className="pb-3 pr-4 font-semibold">Questions</th>
+                      <th className="pb-3 pr-4 font-semibold">Integrity</th>
                       <th className="pb-3 pr-4 font-semibold text-center">Score</th>
                       <th className="pb-3 font-semibold text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
                     {history.map((item) => {
-                      const displayScore = item.totalScore > 10 ? item.totalScore : item.totalScore * 10;
+                      const displayScore = item.finalAdjustedScore !== undefined
+                        ? item.finalAdjustedScore
+                        : (item.totalScore > 10 ? item.totalScore : item.totalScore * 10);
+                      const isReview = item.integrityStatus === 'REVIEW_REQUIRED';
+
                       return (
                         <tr key={item._id} className="hover:bg-slate-800/40 transition-colors">
                           <td className="py-4 pr-4 text-slate-300 text-xs">
@@ -189,11 +267,27 @@ const HistoryPage = ({ user, onLogout }) => {
                           <td className="py-4 pr-4 text-slate-400 text-xs">
                             {item.questions?.length || 0} Questions
                           </td>
+                          <td className="py-4 pr-4 text-xs">
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
+                              isReview
+                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            }`}>
+                              <span>{isReview ? '!' : '✓'}</span>
+                              <span>{isReview ? 'Review Required' : 'Verified'}</span>
+                              <span className="opacity-70 font-normal">({item.qualifyingWarningCount ?? 0}w)</span>
+                            </span>
+                          </td>
                           <td className="py-4 pr-4 text-center">
-                            <span className={`inline-flex items-center justify-center rounded-full px-3 py-1 font-bold text-xs ${
+                            <span className={`inline-flex flex-col items-center justify-center rounded-xl px-3 py-1 font-bold text-xs ${
                               displayScore >= 75 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : displayScore >= 55 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
                             }`}>
-                              {displayScore}/100
+                              <span>{displayScore}/100</span>
+                              {item.integrityPenalty > 0 && (
+                                <span className="text-[9px] text-amber-400 font-normal">
+                                  Orig: {item.originalScore || displayScore}
+                                </span>
+                              )}
                             </span>
                           </td>
                           <td className="py-4 text-right space-x-2">
@@ -232,9 +326,56 @@ const HistoryPage = ({ user, onLogout }) => {
                     <div className="flex items-center gap-3">
                       <span className="text-xs font-bold text-slate-300">Overall Benchmark:</span>
                       <span className="px-3 py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-xs font-extrabold">
-                        {selectedSession.totalScore > 10 ? selectedSession.totalScore : selectedSession.totalScore * 10}/100
+                        {selectedSession.finalAdjustedScore !== undefined
+                          ? selectedSession.finalAdjustedScore
+                          : (selectedSession.totalScore > 10 ? selectedSession.totalScore : selectedSession.totalScore * 10)}/100
                       </span>
                     </div>
+                  </div>
+
+                  {/* Integrity Audit Card inside expanded session */}
+                  <div className={`p-4 rounded-xl border text-xs space-y-2 ${
+                    selectedSession.integrityStatus === 'REVIEW_REQUIRED'
+                      ? 'bg-rose-950/30 border-rose-500/30'
+                      : 'bg-slate-900/80 border-slate-800'
+                  }`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                        <span>🛡️</span> Camera Monitoring & Integrity Audit
+                      </span>
+                      <span className={`px-2.5 py-0.5 rounded-full font-bold text-[11px] border ${
+                        selectedSession.integrityStatus === 'REVIEW_REQUIRED'
+                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      }`}>
+                        Status: {selectedSession.integrityStatus === 'REVIEW_REQUIRED' ? 'Review Required' : 'Verified'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1 text-slate-300">
+                      <div>
+                        <span className="text-slate-400">Qualifying Warnings:</span>{' '}
+                        <strong className="text-slate-100">{selectedSession.qualifyingWarningCount ?? 0} / 10</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Total Events:</span>{' '}
+                        <strong className="text-slate-100">{selectedSession.warningCount ?? (selectedSession.integrityWarnings?.length || 0)}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Original Score:</span>{' '}
+                        <strong className="text-cyan-400">{selectedSession.originalScore ?? selectedSession.totalScore}%</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Adjustment:</span>{' '}
+                        <strong className={selectedSession.integrityPenalty > 0 ? 'text-rose-400' : 'text-emerald-400'}>
+                          {selectedSession.integrityPenalty > 0 ? `-${selectedSession.integrityPenalty} pts` : '0 pts'}
+                        </strong>
+                      </div>
+                    </div>
+                    {selectedSession.integrityReason && (
+                      <p className="text-[11px] text-slate-400 pt-1 border-t border-slate-800/80">
+                        {selectedSession.integrityReason}
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-4">

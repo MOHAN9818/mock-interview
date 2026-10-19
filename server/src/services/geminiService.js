@@ -1,10 +1,8 @@
-import https from 'https';
-
-const agent = new https.Agent({ rejectUnauthorized: false });
+﻿import https from 'https';
 
 /**
- * Robust Gemini API caller utilizing active free-tier Google Generative AI models.
- * Uses https agent with SSL resilience and fallback model chain.
+ * Robust Gemini API caller utilizing active Google Generative AI models.
+ * Strictly maintains TLS verification and handles model fallback chains.
  */
 export const callGemini = async (
   messages,
@@ -14,18 +12,21 @@ export const callGemini = async (
 ) => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    console.warn('GEMINI_API_KEY is not set in server/.env');
+    console.warn('GEMINI_API_KEY is not set in environment.');
     return null;
   }
 
-  // Model fallback chain: gemini-3.6-flash -> gemini-flash-lite-latest -> gemini-3.5-flash -> gemini-3.5-flash-lite
+  const defaultModel = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
   const modelsToTry = [
+    defaultModel,
     preferredModel,
     'gemini-3.6-flash',
     'gemini-flash-lite-latest',
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite'
-  ].filter((v, i, a) => a.indexOf(v) === i); // unique
+    'gemini-3.7-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-flash-latest',
+    'gemini-pro-latest'
+  ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 
   const systemMessage = messages.find((m) => m.role === 'system');
   const otherMessages = messages.filter((m) => m.role !== 'system');
@@ -68,7 +69,6 @@ export const callGemini = async (
               'Content-Type': 'application/json',
               'Content-Length': Buffer.byteLength(postData)
             },
-            agent: agent,
             timeout: 25000
           },
           (res) => {
@@ -98,7 +98,6 @@ export const callGemini = async (
       const candidates = data.candidates || [];
       if (candidates.length > 0) {
         const parts = candidates[0].content?.parts || [];
-        // Extract all text parts, omitting thought metadata
         const textParts = parts
           .filter((p) => p.text && !p.thought)
           .map((p) => p.text)
@@ -110,60 +109,78 @@ export const callGemini = async (
         }
       }
     } catch (err) {
-      console.warn(`callGemini [${model}] error:`, err.message);
-      // continue to next fallback model
+      console.warn(`callGemini [${model}] fallback:`, err.message);
     }
   }
 
   return null;
 };
 
+/**
+ * Generates vector embeddings using Gemini API (gemini-embedding-2 / gemini-embedding-001).
+ */
 export const getGeminiEmbedding = async (text) => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || !text?.trim()) return [];
 
-  const postData = JSON.stringify({
-    model: 'models/text-embedding-004',
-    content: {
-      parts: [{ text: text.substring(0, 4000) }]
-    }
-  });
+  const defaultEmbModel = process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2';
+  const modelsToTry = [
+    defaultEmbModel,
+    'gemini-embedding-2',
+    'gemini-embedding-001',
+    'gemini-embedding-2-preview'
+  ].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i);
 
-  try {
-    const responseText = await new Promise((resolve, reject) => {
-      const req = https.request(
-        `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(postData)
-          },
-          agent: agent,
-          timeout: 10000
-        },
-        (res) => {
-          let body = '';
-          res.on('data', (chunk) => (body += chunk));
-          res.on('end', () => {
-            if (res.statusCode === 200) resolve(body);
-            else reject(new Error(`Embedding status ${res.statusCode}`));
-          });
-        }
-      );
-      req.on('error', (err) => reject(err));
-      req.write(postData);
-      req.end();
+  for (const embeddingModel of modelsToTry) {
+    const postData = JSON.stringify({
+      model: `models/${embeddingModel}`,
+      content: {
+        parts: [{ text: text.substring(0, 4000) }]
+      }
     });
 
-    const data = JSON.parse(responseText);
-    return data.embedding?.values || [];
-  } catch (err) {
-    console.warn('getGeminiEmbedding fallback:', err.message);
-    return [];
+    try {
+      const responseText = await new Promise((resolve, reject) => {
+        const req = https.request(
+          `https://generativelanguage.googleapis.com/v1beta/models/${embeddingModel}:embedContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(postData)
+            },
+            timeout: 10000
+          },
+          (res) => {
+            let body = '';
+            res.on('data', (chunk) => (body += chunk));
+            res.on('end', () => {
+              if (res.statusCode === 200) resolve(body);
+              else reject(new Error(`Embedding status ${res.statusCode}: ${body.substring(0, 100)}`));
+            });
+          }
+        );
+        req.on('error', (err) => reject(err));
+        req.write(postData);
+        req.end();
+      });
+
+      const data = JSON.parse(responseText);
+      const values = data.embedding?.values || [];
+      if (values.length > 0) {
+        return values;
+      }
+    } catch (err) {
+      console.warn(`getGeminiEmbedding [${embeddingModel}] fallback:`, err.message);
+    }
   }
+
+  return [];
 };
 
+/**
+ * Defensive and lenient JSON parser for LLM responses.
+ */
 export const parseJsonSafe = (rawText) => {
   if (!rawText) return null;
 
@@ -180,7 +197,7 @@ export const parseJsonSafe = (rawText) => {
     } catch (e) {}
   }
 
-  // 3. Extract bracketed JSON
+  // 3. Extract bracketed JSON object or array
   const matched = rawText.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
   if (matched) {
     try {

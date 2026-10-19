@@ -28,12 +28,18 @@ const startServer = async () => {
     await mongoose.connect(MONGO_URI);
     console.log('MongoDB connected');
 
-    const listenOnPort = (port) => {
+    const listenOnPort = (port, retryWithFallback = true) => {
       const server = app.listen(port, () => console.log(`Server running on port ${port}`));
       server.on('error', (error) => {
-        if (error.code === 'EADDRINUSE' && port !== FALLBACK_PORT) {
-          console.warn(`Port ${port} is busy. Retrying on ${FALLBACK_PORT}`);
-          listenOnPort(FALLBACK_PORT);
+        if (error.code === 'EADDRINUSE') {
+          const nextPort = FALLBACK_PORT !== port ? FALLBACK_PORT : port + 1;
+          if (retryWithFallback && nextPort !== port) {
+            console.warn(`Port ${port} is busy. Retrying on ${nextPort}...`);
+            listenOnPort(nextPort, false);
+          } else {
+            console.error(`Port ${port} is already in use by another process. Please stop the existing process or specify another PORT.`);
+            process.exit(1);
+          }
         } else {
           console.error('Server start error:', error);
           process.exit(1);

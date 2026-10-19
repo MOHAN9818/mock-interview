@@ -1,258 +1,187 @@
 import { callGemini, parseJsonSafe } from './geminiService.js';
+import { createSessionKnowledgeStore } from './ragService.js';
 
 /**
- * Generates structured, realistic, and progressively diverse interview questions:
- * - Phase 1 (Q1): Candidate self-introduction, career overview & primary technologies.
- * - Phase 2 (Q2): Deep dive into candidate's resume projects (architecture, challenges, role).
- * - Phase 3 (Q3): Core technical fundamentals / programming language & framework mechanics.
- * - Phase 4 (Q4): System design, data consistency, scalability, databases, or infrastructure (a fresh technical topic).
- * - Phase 5+ (Q5): Practical production debugging, architecture trade-offs & incident scenarios.
+ * Generates an adaptive, RAG-grounded interview question.
  *
- * Prevents getting stuck in recursive topic loops by advancing phases and rotating topics.
+ * Architecture:
+ * Candidate Profile + Job Requirements + Conversation History + Previous Answer Evaluation
+ *   -> Synthesize Retrieval Query
+ *   -> Vector Search over Session Knowledge Store (Resume, JD, Technical KB)
+ *   -> Retrieve Top-K Relevant Chunks
+ *   -> Ground Gemini LLM with Retrieved Technical Context
+ *   -> Generate Adaptive Question tailored to candidate performance level
  */
 export const generateInterviewQuestion = async (
   resumeStructured = {},
   jdStructured = {},
-  difficulty = 'Medium',
+  initialDifficulty = 'Medium',
   type = 'Technical',
   conversationHistory = [],
   previousAnswerEvaluation = null
 ) => {
   const targetRole = jdStructured?.role || 'Software Engineer';
-  const requiredSkills = (jdStructured?.required_skills || []).join(', ');
-
-  const candidateProjects = (resumeStructured?.projects || [])
-    .map((p) => (typeof p === 'string' ? p : `${p.name || 'Project'}: ${p.description || ''}`))
-    .join(' | ');
-
-  const candidateSkills = [
-    ...(resumeStructured?.skills || []),
-    ...(resumeStructured?.programming_languages || []),
-    ...(resumeStructured?.frameworks || []),
-    ...(resumeStructured?.databases || []),
-    ...(resumeStructured?.tools || [])
-  ].join(', ');
-
-  const primaryProject = resumeStructured?.projects?.[0]?.name || 'your primary engineering project';
-  const candidateName = resumeStructured?.candidate_name || 'there';
-
-  // Calculate current question number (1-based)
+  const candidateName = resumeStructured?.candidate_name || 'Candidate';
   const questionIndex = Math.floor(conversationHistory.length / 2) + 1;
 
-  // Build compact Q&A history
+  // 1. Build compact Q&A turn history & extracted past topics
   const previousTurns = [];
+  const askedTopics = [];
   for (let i = 0; i < conversationHistory.length; i += 2) {
     const q = conversationHistory[i]?.content;
     const a = conversationHistory[i + 1]?.content;
-    if (q) previousTurns.push({ question: q, answer: a || '(No answer provided)' });
-  }
-
-  // PHASE 1: Introduction & Background Overview
-  if (questionIndex === 1 || conversationHistory.length === 0) {
-    const messages = [
-      {
-        role: 'system',
-        content: `You are an elite, courteous AI Technical Interviewer conducting a realistic video interview for the position of "${targetRole}".
-Generate Question 1 of the interview: The introductory question.
-RULES:
-1. Welcome the candidate briefly and invite them to give a concise self-introduction highlighting their technical background, core skills, and what they've recently been focusing on.
-2. Keep it crisp, conversational, and direct (1-2 sentences maximum).
-3. Do NOT ask multiple complex sub-questions.
-4. Return ONLY a valid JSON object matching:
-{
-  "question": "To start off our interview, could you briefly introduce yourself, highlight your technical background, and share what technologies you've been working with recently?",
-  "category": "Candidate Introduction & Background",
-  "difficulty": "${difficulty}"
-}`
-      },
-      {
-        role: 'user',
-        content: `Target Role: ${targetRole}\nCandidate Name: ${candidateName}\nCandidate Skills: ${candidateSkills || 'Software Development'}`
-      }
-    ];
-
-    const reply = await callGemini(messages, 'gemini-3.6-flash', 'application/json', 0.3);
-    const parsed = parseJsonSafe(reply);
-
-    if (parsed?.question) {
-      return {
-        question: parsed.question,
-        category: parsed.category || 'Candidate Introduction & Background',
-        difficulty: parsed.difficulty || difficulty
-      };
+    if (q) {
+      previousTurns.push({ question: q, answer: a || '(No answer provided)' });
+      askedTopics.push(q);
     }
-
-    return {
-      question: `To start off, could you please give a brief overview of your background, experience, and the primary technologies you work with?`,
-      category: 'Candidate Introduction & Background',
-      difficulty
-    };
   }
 
-  // PHASE 2: Project Deep-Dive & Architecture
-  if (questionIndex === 2) {
-    const messages = [
-      {
-        role: 'system',
-        content: `You are an expert AI Technical Interviewer.
-You are now in PHASE 2 of the interview: Resume Project Deep Dive.
-The candidate has completed their introduction.
-Now ask about a concrete project listed in their resume: "${primaryProject}".
-RULES:
-1. Ask the candidate to explain the architecture of this project, their specific role and technical contributions, and a key technical challenge they had to solve.
-2. Be specific to their resume details if provided.
-3. Keep the question crisp, clear, and professional (1-2 sentences).
-4. Return ONLY a valid JSON object matching:
-{
-  "question": "In your resume, you mentioned building ${primaryProject}. Could you walk me through the high-level architecture of that application and the biggest technical challenge you solved while building it?",
-  "category": "Project Architecture & Implementation",
-  "difficulty": "${difficulty}"
-}`
-      },
-      {
-        role: 'user',
-        content: `Target Role: ${targetRole}\nCandidate Projects: ${candidateProjects || primaryProject}\nCandidate Skills: ${candidateSkills}`
-      }
-    ];
+  // 2. Mode-Specific Prompt Directives
+  let modeDirective = 'Focus on core technical proficiency, architectural patterns, and practical engineering trade-offs.';
+  if (type?.toLowerCase().includes('hr') || type?.toLowerCase().includes('behavioral')) {
+    modeDirective = 'Focus strictly on behavioral assessment (STAR method: Situation, Task, Action, Result), leadership, cross-functional collaboration, conflict resolution, and handling production pressure.';
+  } else if (type?.toLowerCase().includes('system') || type?.toLowerCase().includes('design')) {
+    modeDirective = 'Focus on large-scale distributed system design, high availability, database partitioning, caching strategies, rate limiting, and failure modes.';
+  } else if (type?.toLowerCase().includes('project')) {
+    modeDirective = 'Focus deeply on the specific engineering projects and achievements explicitly documented in the candidate resume, challenging their architectural choices, concurrency models, and trade-offs.';
+  }
 
-    const reply = await callGemini(messages, 'gemini-3.6-flash', 'application/json', 0.3);
-    const parsed = parseJsonSafe(reply);
+  // 3. Determine Dynamic Difficulty & Adaptation Strategy
+  let currentDifficulty = initialDifficulty;
+  let adaptationReason = `Initial question based on ${type} setup.`;
+  let focusStrategy = 'general_competency';
 
-    if (parsed?.question) {
-      return {
-        question: parsed.question,
-        category: parsed.category || 'Project Architecture & Implementation',
-        difficulty: parsed.difficulty || difficulty
-      };
+  if (previousAnswerEvaluation) {
+    const techScore = Number(previousAnswerEvaluation.technical_correctness || previousAnswerEvaluation.overall_answer_score || 60);
+    const compScore = Number(previousAnswerEvaluation.completeness || 60);
+    const probScore = Number(previousAnswerEvaluation.problem_solving || 60);
+    const missingConcepts = previousAnswerEvaluation.missing_key_concepts || [];
+
+    if (techScore < 50) {
+      currentDifficulty = 'Easy';
+      focusStrategy = 'address_missing_fundamentals';
+      adaptationReason = `Previous answer showed gaps (${missingConcepts.slice(0, 2).join(', ') || 'fundamental mechanics'}). Prompting on core conceptual building blocks.`;
+    } else if (techScore <= 75) {
+      currentDifficulty = 'Medium';
+      focusStrategy = compScore < 55 ? 'probe_completeness' : 'medium_depth_tradeoff';
+      adaptationReason = `Candidate demonstrated moderate understanding. Probing deeper on architectural trade-offs and edge-case handling.`;
+    } else {
+      currentDifficulty = 'Hard';
+      focusStrategy = probScore < 60 ? 'scenario_problem_solving' : 'system_design_scaling';
+      adaptationReason = `Candidate demonstrated strong mastery. Escalating difficulty to distributed system design, high concurrency, and failure recovery.`;
     }
-
-    return {
-      question: `In your resume, you highlighted ${primaryProject}. Can you walk me through its high-level architecture and explain the most complex technical challenge you overcame while building it?`,
-      category: 'Project Architecture & Implementation',
-      difficulty
-    };
   }
 
-  // PHASE 3: Core Technical & Framework Fundamentals
-  if (questionIndex === 3) {
-    const messages = [
-      {
-        role: 'system',
-        content: `You are an expert AI Technical Interviewer.
-You are now in PHASE 3 of the interview: Core Technical & Framework Fundamentals.
-IMPORTANT DIVERSIFICATION RULE:
-- Transition away from project walkthroughs to test deep fundamental knowledge of their primary programming language or framework (e.g. JavaScript/TypeScript execution model, asynchronous programming, React lifecycle/hooks, Python memory/GIL, Java JVM/concurrency, or SQL transactions).
-- Do NOT get stuck on the previous project. Rotate to core engineering depth.
-- Return ONLY a valid JSON object matching:
+  // 4. Formulate RAG Search Query
+  let ragQuery = '';
+  if (questionIndex === 1) {
+    ragQuery = `${targetRole} introductory skills ${resumeStructured?.skills?.slice(0, 5).join(' ') || ''}`;
+  } else if (previousAnswerEvaluation?.missing_key_concepts?.length) {
+    ragQuery = `${previousAnswerEvaluation.missing_key_concepts.join(' ')} ${targetRole}`;
+  } else if (previousAnswerEvaluation?.recommended_followup) {
+    ragQuery = `${previousAnswerEvaluation.recommended_followup} ${targetRole}`;
+  } else {
+    const techList = [
+      ...(resumeStructured?.programming_languages || []),
+      ...(resumeStructured?.frameworks || []),
+      ...(jdStructured?.required_skills || [])
+    ].slice(0, 5).join(' ');
+    ragQuery = `${techList} ${targetRole} ${type} fundamentals`;
+  }
+
+  // 5. Retrieve Grounding Chunks via RAG Store
+  let retrievedChunks = [];
+  try {
+    const ragStore = await createSessionKnowledgeStore({
+      resumeStructured,
+      jdStructured
+    });
+    retrievedChunks = await ragStore.retrieveRelevantChunks(ragQuery, {}, 4);
+  } catch (err) {
+    console.warn('RAG retrieval fallback:', err.message);
+  }
+
+  const ragContextSnippet = retrievedChunks.length > 0
+    ? retrievedChunks.map((c) => `[Source: ${c.section}] ${c.text}`).join('\n\n')
+    : 'Standard industry engineering standards for ' + targetRole;
+
+  const previousEvalInfo = previousAnswerEvaluation
+    ? `Last Score: ${previousAnswerEvaluation.overall_answer_score || 50}\nMistakes: ${(previousAnswerEvaluation.mistakes_identified || []).join(', ')}\nMissing Concepts: ${(previousAnswerEvaluation.missing_key_concepts || []).join(', ')}\nRecommended Followup: ${previousAnswerEvaluation.recommended_followup || 'None'}`
+    : 'None (First Question)';
+
+  // 6. Compose System Prompt with Adaptive Rules & RAG Grounding
+  const promptSystem = `You are a Principal Software Engineer and elite AI Technical Interviewer conducting a realistic, adaptive video interview for the position of "${targetRole}".
+
+INTERVIEW CONFIGURATION:
+- Mode: ${type} (${modeDirective})
+- Candidate: ${candidateName}
+- Question Number: ${questionIndex}
+- Dynamic Difficulty Target: ${currentDifficulty}
+- Adaptation Strategy: ${focusStrategy}
+- Adaptation Reason: ${adaptationReason}
+
+RAG RETRIEVED GROUNDING KNOWLEDGE (Use to inform question depth without quoting verbatim):
+${ragContextSnippet}
+
+PREVIOUS EVALUATION SIGNALS:
+${previousEvalInfo}
+
+ANTI-REPETITION CONSTRAINT:
+Do not repeat questions on topics already covered: ${askedTopics.join(' | ') || 'None yet'}.
+
+ADAPTIVE QUESTION GENERATION RULES:
+1. If question 1: Warmly welcome the candidate, asking them to introduce themselves and discuss their background relevant to ${type}.
+2. If previous answer was weak (score < 50): Ask a supportive follow-up clarifying the missing concept (${previousAnswerEvaluation?.missing_key_concepts?.[0] || 'core mechanics'}).
+3. If previous answer was strong (score > 80): Increase difficulty to system design, concurrency, or failure recovery.
+4. Keep the question conversational, direct, and concise (1-2 sentences).
+5. DO NOT copy the RAG snippet word-for-word; synthesize it naturally into the question.
+6. Return ONLY a valid JSON object matching:
 {
-  "question": "The question text here...",
-  "category": "Core Technical Fundamentals",
-  "difficulty": "${difficulty}"
-}`
-      },
-      {
-        role: 'user',
-        content: `Target Role: ${targetRole}\nCandidate Skills: ${candidateSkills}\nRequired Skills: ${requiredSkills}\nPrevious Q&A: ${JSON.stringify(previousTurns)}`
-      }
-    ];
+  "question": "The interview question text here...",
+  "category": "e.g., Spring Boot Architecture / STAR Behavioral / Concurrency / System Design",
+  "difficulty": "${currentDifficulty}",
+  "adaptationReason": "${adaptationReason}"
+}`;
 
-    const reply = await callGemini(messages, 'gemini-3.6-flash', 'application/json', 0.3);
-    const parsed = parseJsonSafe(reply);
+  const promptUser = `Previous Questions & Answers in this session:
+${previousTurns.length > 0 ? JSON.stringify(previousTurns, null, 2) : 'None (Starting interview)'}
 
-    if (parsed?.question) {
-      return {
-        question: parsed.question,
-        category: parsed.category || 'Core Technical Fundamentals',
-        difficulty: parsed.difficulty || difficulty
-      };
-    }
+Generate Question ${questionIndex} now.`;
 
-    return {
-      question: `Moving to core engineering concepts: how does asynchronous execution and event-driven concurrency work in your primary backend or runtime environment?`,
-      category: 'Core Technical Fundamentals',
-      difficulty
-    };
-  }
-
-  // PHASE 4: System Design, Scalability, Databases & Infrastructure (A New Domain)
-  if (questionIndex === 4) {
-    const messages = [
-      {
-        role: 'system',
-        content: `You are an expert AI Technical Interviewer.
-You are now in PHASE 4 of the interview: System Design, Databases & Scalability.
-IMPORTANT DIVERSIFICATION RULE:
-- Explore a NEW technical topic not yet covered in questions 1-3.
-- Focus on: Database optimization & indexing, caching strategies (e.g. Redis), API design (REST vs gRPC/WebSockets), message brokers (Kafka/RabbitMQ), microservices reliability, or containerization (Docker/Kubernetes).
-- DO NOT repeat or loop back to topics already discussed.
-- Return ONLY a valid JSON object matching:
-{
-  "question": "The question text here...",
-  "category": "System Design & Scalability",
-  "difficulty": "${difficulty}"
-}`
-      },
-      {
-        role: 'user',
-        content: `Target Role: ${targetRole}\nCandidate Skills: ${candidateSkills}\nRequired Skills: ${requiredSkills}\nPrevious Questions Asked: ${previousTurns.map(t => t.question).join(' | ')}`
-      }
-    ];
-
-    const reply = await callGemini(messages, 'gemini-3.6-flash', 'application/json', 0.3);
-    const parsed = parseJsonSafe(reply);
-
-    if (parsed?.question) {
-      return {
-        question: parsed.question,
-        category: parsed.category || 'System Design & Scalability',
-        difficulty: parsed.difficulty || difficulty
-      };
-    }
-
-    return {
-      question: `When scaling an application to handle high read and write throughput, what strategies do you use for database indexing and caching?`,
-      category: 'System Design & Scalability',
-      difficulty
-    };
-  }
-
-  // PHASE 5+: Production Debugging, Incident Scenarios & Engineering Trade-offs
   const messages = [
-    {
-      role: 'system',
-      content: `You are an expert AI Technical Interviewer.
-You are now in PHASE 5 of the interview: Production Scenarios & Real-World Problem Solving.
-RULES:
-1. Present a realistic production or engineering trade-off scenario (e.g., sudden latency spike in production, resolving database connection pool exhaustion, handling race conditions, or designing backward-compatible API migrations).
-2. Ask how the candidate would systematically investigate, troubleshoot, and resolve the issue.
-3. Keep the scenario realistic, clear, and concise (1-2 sentences).
-4. Return ONLY a valid JSON object matching:
-{
-  "question": "The question text here...",
-  "category": "Production Scenarios & Incident Resolution",
-  "difficulty": "${difficulty}"
-}`
-    },
-    {
-      role: 'user',
-      content: `Target Role: ${targetRole}\nCandidate Skills: ${candidateSkills}\nRequired Skills: ${requiredSkills}\nPrevious Questions Asked: ${previousTurns.map(t => t.question).join(' | ')}`
-    }
+    { role: 'system', content: promptSystem },
+    { role: 'user', content: promptUser }
   ];
 
-  const reply = await callGemini(messages, 'gemini-3.6-flash', 'application/json', 0.3);
-  const parsed = parseJsonSafe(reply);
+  const aiReply = await callGemini(messages, 'gemini-2.5-flash', 'application/json', 0.25);
+  const parsed = parseJsonSafe(aiReply);
 
   if (parsed?.question) {
     return {
       question: parsed.question,
-      category: parsed.category || 'Production Scenarios & Incident Resolution',
-      difficulty: parsed.difficulty || difficulty
+      category: parsed.category || (questionIndex === 1 ? 'Candidate Introduction & Background' : `${type} Evaluation`),
+      difficulty: parsed.difficulty || currentDifficulty,
+      adaptationReason: parsed.adaptationReason || adaptationReason,
+      retrievedGrounding: retrievedChunks.map((c) => c.section)
     };
   }
 
+  // Fallback if LLM parsing fails
+  const fallbackQuestions = [
+    `To start off our interview, could you briefly introduce yourself, highlight your engineering background, and summarize your primary tech stack?`,
+    `Could you walk me through the high-level architecture of one of your most complex projects and the technical decisions you made?`,
+    `In your primary programming environment, how do you handle asynchronous operations and concurrent resource management?`,
+    `When designing a scalable system with high read and write throughput, what strategies do you apply for caching and database indexing?`,
+    `Suppose a production service experiences a sudden spike in latency and request timeouts. How would you systematically diagnose and mitigate the root cause?`
+  ];
+
+  const defaultQuestion = fallbackQuestions[Math.min(questionIndex - 1, fallbackQuestions.length - 1)];
+
   return {
-    question: `Suppose a critical microservice in production experiences a sudden latency spike causing request timeouts. How would you systematically diagnose the root cause and mitigate the issue?`,
-    category: 'Production Scenarios & Incident Resolution',
-    difficulty
+    question: defaultQuestion,
+    category: questionIndex === 1 ? 'Candidate Introduction' : 'System Architecture',
+    difficulty: currentDifficulty,
+    adaptationReason: adaptationReason,
+    retrievedGrounding: []
   };
 };

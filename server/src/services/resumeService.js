@@ -26,7 +26,34 @@ const extractFallbackSkills = (text = '') => {
   return Array.from(found);
 };
 
-export const extractStructuredResume = async (resumeText) => {
+/**
+ * Extracts line-by-line evidence snippets from the resume text for verified skills.
+ */
+export const extractSkillEvidence = (resumeText = '', skills = []) => {
+  if (!resumeText || !Array.isArray(skills)) return {};
+  const lines = resumeText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const evidenceMap = {};
+
+  skills.forEach((skill) => {
+    if (!skill) return;
+    const escaped = escapeRegex(skill.toLowerCase());
+    const regex = new RegExp(`(^|[^a-z0-9+#])${escaped}(?=$|[^a-z0-9+#])`, 'i');
+
+    for (const line of lines) {
+      if (regex.test(line)) {
+        evidenceMap[skill] = line.length > 180 ? line.substring(0, 180) + '...' : line;
+        break;
+      }
+    }
+    if (!evidenceMap[skill]) {
+      evidenceMap[skill] = `Mentioned in candidate technical competencies`;
+    }
+  });
+
+  return evidenceMap;
+};
+
+export const extractStructuredResume = async (resumeText = '') => {
   if (!resumeText?.trim()) return null;
 
   const fallbackSkills = extractFallbackSkills(resumeText);
@@ -35,7 +62,7 @@ export const extractStructuredResume = async (resumeText) => {
     {
       role: 'system',
       content: `You are an elite enterprise ATS (Applicant Tracking System) parser and talent intelligence engine.
-Your task is to exhaustively extract every skill, project, technology, framework, database, tool, role, and achievement from the candidate's resume text.
+Your task is to exhaustively extract every skill, project, technology, framework, database, tool, role, internship, certification, and achievement from the candidate's resume text.
 
 EXTRACTION RULES:
 1. "skills": All general and specialized technical skills.
@@ -43,44 +70,14 @@ EXTRACTION RULES:
 3. "frameworks": All libraries & frameworks (e.g. React, Node.js, Express, Next.js, Django, Spring Boot, Tailwind, etc.).
 4. "databases": All database engines (e.g. MongoDB, PostgreSQL, MySQL, Redis, DynamoDB, etc.).
 5. "tools": All tools & platforms (e.g. Docker, Git, AWS, Kubernetes, Linux, Postman, Figma, etc.).
-6. "projects": Array of projects with { "name": "Project Name", "description": "1-2 sentence overview", "technologies": ["tech1", "tech2"] }.
-7. "experience": Array of work history { "title": "Role Title", "company": "Company Name", "duration": "Dates/Duration", "description": "Key achievements" }.
-8. "education": Array of degrees { "degree": "Degree Title", "institution": "College/University", "year": "Year" }.
-9. "candidate_name": Full name of candidate.
+6. "projects": Array of projects with { "name": "Project Name", "description": "1-2 sentence overview", "technologies": ["tech1", "tech2"], "bullet_points": ["bullet 1", "bullet 2"] }.
+7. "experience": Array of work history { "title": "Role Title", "company": "Company Name", "duration": "Dates/Duration", "description": "Key achievements", "bullet_points": ["bullet 1"] }.
+8. "internships": Array of internship experiences { "title": "Title", "company": "Company", "duration": "Duration", "description": "Details" }.
+9. "education": Array of degrees { "degree": "Degree Title", "institution": "College/University", "year": "Year" }.
+10. "certifications": Array of certifications strings.
+11. "candidate_name": Full name of candidate.
 
-Return ONLY a valid JSON object matching:
-{
-  "candidate_name": "Full Name",
-  "summary": "Professional summary or objective",
-  "skills": ["Skill1", "Skill2"],
-  "programming_languages": ["Lang1", "Lang2"],
-  "frameworks": ["Framework1", "Framework2"],
-  "databases": ["DB1", "DB2"],
-  "tools": ["Tool1", "Tool2"],
-  "projects": [
-    {
-      "name": "Project Name",
-      "description": "Project overview and architecture",
-      "technologies": ["React", "Node.js", "MongoDB"]
-    }
-  ],
-  "experience": [
-    {
-      "title": "Software Engineer",
-      "company": "Company Name",
-      "duration": "2022 - Present",
-      "description": "Responsibilities and accomplishments"
-    }
-  ],
-  "education": [
-    {
-      "degree": "B.Tech Computer Science",
-      "institution": "University Name",
-      "year": "2024"
-    }
-  ],
-  "certifications": ["Cert1"]
-}`
+Return ONLY a valid JSON object matching the exact structure.`
     },
     {
       role: 'user',
@@ -88,11 +85,10 @@ Return ONLY a valid JSON object matching:
     }
   ];
 
-  const aiReply = await callGemini(messages, 'gemini-3.6-flash', 'application/json', 0.1);
+  const aiReply = await callGemini(messages, 'gemini-2.5-flash', 'application/json', 0.1);
   const parsed = parseJsonSafe(aiReply);
 
   if (parsed && typeof parsed === 'object') {
-    // Merge any skills that might have been missed with fallback keyword extraction
     const combinedSkills = new Set([
       ...(parsed.skills || []),
       ...(parsed.programming_languages || []),
@@ -102,42 +98,50 @@ Return ONLY a valid JSON object matching:
       ...fallbackSkills
     ]);
 
+    const allSkillsList = Array.from(combinedSkills);
+    const skillEvidence = extractSkillEvidence(resumeText, allSkillsList);
+
     return {
       candidate_name: parsed.candidate_name || 'Candidate',
-      summary: parsed.summary || 'Software professional profile.',
-      skills: Array.from(combinedSkills),
-      programming_languages: parsed.programming_languages || fallbackSkills.filter(s => ['JavaScript', 'TypeScript', 'Python', 'Java', 'C++', 'C#', 'Go', 'SQL'].includes(s)),
-      frameworks: parsed.frameworks || fallbackSkills.filter(s => ['React', 'Next.js', 'Vue', 'Angular', 'Node.js', 'Express', 'Django', 'Spring Boot'].includes(s)),
-      databases: parsed.databases || fallbackSkills.filter(s => ['MongoDB', 'PostgreSQL', 'MySQL', 'Redis', 'Elasticsearch'].includes(s)),
-      tools: parsed.tools || fallbackSkills.filter(s => ['Docker', 'Kubernetes', 'AWS', 'Git', 'Linux'].includes(s)),
+      summary: parsed.summary || 'Software engineering professional profile.',
+      skills: allSkillsList,
+      programming_languages: parsed.programming_languages || fallbackSkills.filter((s) => ['JavaScript', 'TypeScript', 'Python', 'Java', 'C++', 'C#', 'Go', 'SQL'].includes(s)),
+      frameworks: parsed.frameworks || fallbackSkills.filter((s) => ['React', 'Next.js', 'Vue', 'Angular', 'Node.js', 'Express', 'Django', 'Spring Boot'].includes(s)),
+      databases: parsed.databases || fallbackSkills.filter((s) => ['MongoDB', 'PostgreSQL', 'MySQL', 'Redis', 'Elasticsearch'].includes(s)),
+      tools: parsed.tools || fallbackSkills.filter((s) => ['Docker', 'Kubernetes', 'AWS', 'Git', 'Linux'].includes(s)),
       projects: Array.isArray(parsed.projects) && parsed.projects.length ? parsed.projects : [
-        { name: 'Core Software Development Project', description: 'Application built utilizing ' + fallbackSkills.slice(0, 4).join(', '), technologies: fallbackSkills.slice(0, 4) }
+        { name: 'Core Software Development Project', description: 'Application built utilizing ' + fallbackSkills.slice(0, 4).join(', '), technologies: fallbackSkills.slice(0, 4), bullet_points: [] }
       ],
       experience: Array.isArray(parsed.experience) ? parsed.experience : [],
+      internships: Array.isArray(parsed.internships) ? parsed.internships : [],
       education: Array.isArray(parsed.education) ? parsed.education : [],
-      certifications: Array.isArray(parsed.certifications) ? parsed.certifications : []
+      certifications: Array.isArray(parsed.certifications) ? parsed.certifications : [],
+      skill_evidence: skillEvidence
     };
   }
 
-  // Fallback if AI JSON parse completely fails
+  // Fallback if AI JSON parse fails
+  const allFallbackSkills = fallbackSkills.length ? fallbackSkills : ['Software Engineering', 'Problem Solving', 'Web Development'];
   return {
     candidate_name: 'Candidate',
     summary: 'Parsed Technical Profile',
-    skills: fallbackSkills.length ? fallbackSkills : ['Software Engineering', 'Problem Solving', 'Web Development'],
+    skills: allFallbackSkills,
     programming_languages: fallbackSkills.slice(0, 3),
     frameworks: fallbackSkills.slice(3, 6),
     databases: fallbackSkills.slice(6, 8),
     tools: ['Git', 'VS Code'],
     projects: [
-      { name: 'Software Project', description: 'Full-stack application utilizing ' + fallbackSkills.slice(0, 3).join(', '), technologies: fallbackSkills.slice(0, 3) }
+      { name: 'Software Engineering Project', description: 'Application built utilizing ' + fallbackSkills.slice(0, 3).join(', '), technologies: fallbackSkills.slice(0, 3), bullet_points: [] }
     ],
     experience: [],
+    internships: [],
     education: [],
-    certifications: []
+    certifications: [],
+    skill_evidence: extractSkillEvidence(resumeText, allFallbackSkills)
   };
 };
 
-export const analyzeResumeQuality = async (resumeText, structuredData) => {
+export const analyzeResumeQuality = async (resumeText = '', structuredData = {}) => {
   if (!resumeText) return { resume_score: 60 };
 
   const messages = [
@@ -147,10 +151,11 @@ export const analyzeResumeQuality = async (resumeText, structuredData) => {
 Critically evaluate the candidate's resume text and extracted profile.
 
 Score strictly based on:
-- Technical depth and clarity
-- Project complexity and quantifiable impact (metrics, scale, architecture)
-- Skill relevance and completeness
-- Formatting and professional presentation
+- Technical depth, clarity, and keyword density
+- Project complexity and quantifiable impact (metrics, latency, throughput, scale)
+- Identification of weak bullet points or vague descriptions
+- Actionable bullet point improvements with realistic Before vs After comparisons without fabricating achievements
+- Missing sections (e.g., summary, metrics, testing, CI/CD, certifications)
 
 Return ONLY a valid JSON object matching:
 {
@@ -160,12 +165,27 @@ Return ONLY a valid JSON object matching:
     "Clear project architecture descriptions"
   ],
   "weaknesses": [
-    "Lacks measurable business metrics or performance benchmarks (e.g. latency reduced by X%)",
+    "Lacks measurable business metrics or performance benchmarks",
     "Missing automated testing and CI/CD details"
   ],
   "missing_information": [
     "Production deployment metrics",
     "Unit and integration testing methodologies"
+  ],
+  "missing_sections": ["Certifications", "Quantifiable Metrics"],
+  "weak_bullet_points": [
+    {
+      "original": "Worked on the backend APIs",
+      "issue": "Vague responsibility lacking action verb, specific tech stack, and measurable impact.",
+      "suggested": "Designed and implemented RESTful microservices with Node.js and MongoDB, handling 500+ requests/sec with sub-50ms latency."
+    }
+  ],
+  "bullet_improvements_comparison": [
+    {
+      "section": "Projects / Experience",
+      "before": "Created user interface with React",
+      "after": "Engineered responsive, state-managed SPA interfaces in React with Tailwind CSS, improving user load speed by 30%."
+    }
   ],
   "skill_quality": "Strong coverage across frontend, backend, and database technologies.",
   "project_quality": "Good architectural foundation; could emphasize scale and concurrency.",
@@ -178,11 +198,11 @@ Return ONLY a valid JSON object matching:
     },
     {
       role: 'user',
-      content: `Resume Text:\n${resumeText.substring(0, 6000)}\n\nStructured Profile:\n${JSON.stringify(structuredData)}`
+      content: `Resume Text:\n${resumeText.substring(0, 6000)}\n\nStructured Profile:\n${JSON.stringify(structuredData, null, 2)}`
     }
   ];
 
-  const aiReply = await callGemini(messages, 'gemini-3.6-flash', 'application/json', 0.2);
+  const aiReply = await callGemini(messages, 'gemini-2.5-flash', 'application/json', 0.2);
   const parsed = parseJsonSafe(aiReply);
 
   return parsed || {
@@ -190,9 +210,25 @@ Return ONLY a valid JSON object matching:
     strengths: ['Identified relevant modern technologies in candidate profile'],
     weaknesses: ['Add more quantitative performance metrics to project descriptions'],
     missing_information: ['Continuous integration and automated testing details'],
+    missing_sections: ['Quantifiable Benchmarks'],
+    weak_bullet_points: [
+      {
+        original: 'Implemented features and fixed bugs',
+        issue: 'Lacks quantifiable metric and architectural depth',
+        suggested: 'Engineered modular application features and optimized database queries to enhance system responsiveness.'
+      }
+    ],
+    bullet_improvements_comparison: [
+      {
+        section: 'Technical Experience',
+        before: 'Built application using MERN stack',
+        after: 'Architected full-stack MERN web application with JWT authentication, RESTful APIs, and MongoDB aggregation pipelines.'
+      }
+    ],
     skill_quality: 'Solid technical foundation.',
     project_quality: 'Demonstrates functional software development capability.',
     experience_quality: 'Aligned with industry requirements.',
     resume_improvement_suggestions: ['Include metrics on latency, throughput, or user scale in project descriptions.']
   };
 };
+

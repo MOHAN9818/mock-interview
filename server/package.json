@@ -5,8 +5,9 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
-    "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "dev": "nodemon --use-system-ca src/server.js",
+    "start": "node --use-system-ca src/server.js",
+    "test": "node --test test/**/*.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
