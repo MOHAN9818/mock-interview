@@ -6,7 +6,11 @@ import ResumeJdSetup from './components/ResumeJdSetup';
 import VideoInterviewStage from './components/VideoInterviewStage';
 import InterviewDashboard from './components/InterviewDashboard';
 
-const api = axios.create({ baseURL: '/api' });
+const API_BASE_URL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL.replace(/\/+$/, '')}/api`
+  : '/api';
+
+const api = axios.create({ baseURL: API_BASE_URL });
 
 const AuthPage = ({ onAuth }) => {
   const [isLogin, setIsLogin] = useState(true);
