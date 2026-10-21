@@ -36,6 +36,10 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', message: 'AI Mock Interview API is running' });
 });
 
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', message: 'AI Mock Interview API is running' });
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/interviews', interviewRoutes);
 
