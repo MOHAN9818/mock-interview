@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from './api';
 import HistoryPage from './HistoryPage';
 import ResumeJdSetup from './components/ResumeJdSetup';
 import VideoInterviewStage from './components/VideoInterviewStage';
 import InterviewDashboard from './components/InterviewDashboard';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL
-  ? `${import.meta.env.VITE_API_URL.replace(/\/+$/, '')}/api`
-  : '/api';
-
-const api = axios.create({ baseURL: API_BASE_URL });
 
 const AuthPage = ({ onAuth }) => {
   const [isLogin, setIsLogin] = useState(true);
@@ -29,7 +23,17 @@ const AuthPage = ({ onAuth }) => {
       localStorage.setItem('user', JSON.stringify(response.data.user));
       onAuth(response.data.user);
     } catch (err) {
-      setError(err.response?.data?.error || err.response?.data?.message || 'Authentication failed. Please check credentials.');
+      if (err.response?.data?.error) {
+        setError(err.response.data.error);
+      } else if (err.response?.data?.message) {
+        setError(err.response.data.message);
+      } else if (err.code === 'ECONNABORTED') {
+        setError('Request timed out. Backend may be waking up on Render (~30-50s). Please try again in a few moments.');
+      } else if (err.code === 'ERR_NETWORK' || !err.response) {
+        setError('Unable to reach server. If the backend is on a free tier, it may be waking up. Please retry shortly.');
+      } else {
+        setError(err.message || 'Authentication failed. Please check credentials.');
+      }
     } finally {
       setLoading(false);
     }
